@@ -213,4 +213,72 @@ def mic_i2s_reader_task():
         for i in range(SAMPLES_SHORT):
             samples[i] = MIC_CONVERT(int_samples[i])
     
+ 
+
+I2S_TASK_PRI = const(4)
+I2S_TASK_STACK = const(2048)
+
+#SAMPLES_SHORT = const(512)
+#samples_queue = None
+#samples = bytearray(SAMPLES_SHORT * 4)
+
+def mic_i2s_init():
+    i2s.sample_rate(SAMPLE_RATE_IN_HZ)
+
+def mic_i2s_reader_task():
+    mic_i2s_init()
     
+    while True:
+        bytes_read = i2s.readinto(samples, timeout=0)
+        
+        start_tick = ticks_ms()
+
+        int_samples = uio.BytesIO(samples)
+        for i in range(SAMPLES_SHORT):
+            int_samples_i = int.from_bytes(int_samples.read(4), 'little')
+            samples[i*4:i*4+4] = int_samples_i.to_bytes(4, 'little')
+
+        sum_sqr_SPL = sum_queue_t.filter(samples, samples, SAMPLES_SHORT)
+        sum_sqr_weighted = weighting_queue_t.filter(samples, samples, SAMPLES_SHORT)
+
+        proc_ticks = ticks_ms() - start_tick
+        
+        q = sum_queue_t(sum_sqr_SPL, sum_sqr_weighted, proc_ticks)
+        
+        uos.dupterm(None, 1)
+        uos.dupterm(uart(0, 115200), 1)
+        print(q)
+
+        samples_queue.put(q)
+
+def setup():
+    uos.dupterm(None, 1)
+    uos.dupterm(uart(0, 115200), 1)
+
+    i2s.deinit()
+
+    samples_queue = queue.Queue(8)
+
+    mic_i2s_reader_task_handle = _thread.start_new_thread(mic_i2s_reader_task, (None,))
+
+    Leq_samples = 0
+    Leq_sum_sqr = 0
+    Leq_dB = 0
+
+    while True:
+        q = samples_queue.get()
+        
+        short_RMS = sqrt(q.sum_sqr_SPL / SAMPLES_SHORT)
+        short_SPL_dB = MIC_OFFSET_DB + MIC_REF_DB + 20 * log10(short_RMS / MIC_REF_AMPL)
+
+        if short_SPL_dB > MIC_OVERLOAD_DB:
+            Leq_sum_sqr = inf
+        elif isnan(short_SPL_dB) or short_SPL_dB < MIC_NOISE_DB:
+            Leq_sum_sqr = -inf
+
+        Leq_sum_sqr += q.sum_sqr_weighted
+        Leq_samples += SAMPLES_SHORT
+
+        if Leq_samples >= SAMPLE_RATE * LEQ_PERIOD:
+            Leq_RMS = sqrt(Leq_sum_sqr / Leq_samples)
+            Leq
