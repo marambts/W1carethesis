@@ -195,3 +195,22 @@ while True:
     # Socket close()
     conn.close()
 
+#I2S Reader Task
+#FreeRTOS priority and stack size (in 32-bit words) 
+
+I2S_TASK_PRI = 4
+I2S_TASK_STACK = 2048
+
+def mic_i2s_reader_task():
+    size_t bytes_read = 0
+    i2s_reader = i2s_read(I2S_PORT, &samples, SAMPLES_SHORT * sizeof(int32_t), &bytes_read, portMAX_DELAY)
+    
+    while True:
+        i2s_reader = i2s_read(I2S_PORT, &samples, SAMPLES_SHORT * sizeof(int32_t), &bytes_read, portMAX_DELAY)
+        TickType_t start_tick = xTaskGetTickCount()
+        int_samples = (SAMPLE_T*)&samples #not sure if this is the same w/ SAMPLE_T* int_samples = (SAMPLE_T*)&samples
+        
+        for i in range(SAMPLES_SHORT):
+            samples[i] = MIC_CONVERT(int_samples[i])
+    
+    
