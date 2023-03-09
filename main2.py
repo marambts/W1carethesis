@@ -379,7 +379,10 @@ def mic_i2s_reader_task(parameter):
     # Discard first block, microphone may have startup time (i.e. INMP441 up to 83ms)
     bytes_read = 0
     i2s_read(I2S_PORT, samples, SAMPLES_SHORT * 4, bytes_read, portMAX_DELAY)
-
+    # reads audio data from the I2S bus and stores it in the buffer 'samples'
+    # samples: The buffer to store the audio data. This buffer must be pre-allocated with a size of SAMPLES_SHORT * 4 bytes, 
+    # where SAMPLES_SHORT is the number of audio samples to read. Each audio sample is 4 bytes (32 bits) long.
+    
     while True:
         # Block and wait for microphone values from I2S
         #
