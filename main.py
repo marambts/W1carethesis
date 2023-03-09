@@ -2,6 +2,8 @@
 #
 import machine
 import time
+import math
+import utime
 
 # ************************
 # Configure the ESP32 wifi
@@ -260,5 +262,102 @@ def mic_i2s_init():
 I2S_TASK_PRI = 4
 I2S_TASK_STACK = 2048
 
+I2S_TASK_PRI = 4
+I2S_TASK_STACK = 2048
 
+def mic_i2s_reader_task(parameter):
+    mic_i2s_init()
+
+    # Discard first block, microphone may have startup time (i.e. INMP441 up to 83ms)
+    bytes_read = 0
+    i2s_read(I2S_PORT, samples, SAMPLES_SHORT * 4, bytes_read, portMAX_DELAY)
+
+    while True:
+        # Block and wait for microphone values from I2S
+        #
+        # Data is moved from DMA buffers to our 'samples' buffer by the driver ISR
+        # and when there is requested ammount of data, task is unblocked
+        #
+        # Note: i2s_read does not care it is writing in float[] buffer, it will write
+        #       integer values to the given address, as received from the hardware peripheral. 
+        i2s_read(I2S_PORT, samples, SAMPLES_SHORT * 4, bytes_read, portMAX_DELAY)
+
+        start_tick = ticks_ms()
+
+        # Convert (including shifting) integer microphone values to floats, 
+        # using the same buffer (assumed sample size is same as size of float), 
+        # to save a bit of memory
+        int_samples = bytearray(samples)
+        for i in range(0, SAMPLES_SHORT):
+            int_samples[i * 4: (i + 1) * 4] = struct.pack("<i", MIC_CONVERT(struct.unpack("<i", int_samples[i * 4: (i + 1) * 4])[0]))
+        samples = bytearray(int_samples)
+
+        q = {}
+        # Apply equalization and calculate Z-weighted sum of squares, 
+        # writes filtered samples back to the same buffer.
+        q['sum_sqr_SPL'] = MIC_EQUALIZER.filter(samples, samples, SAMPLES_SHORT)
+
+        # Apply weighting and calucate weigthed sum of squares
+        q['sum_sqr_weighted'] = WEIGHTING.filter(samples, samples, SAMPLES_SHORT)
+
+        # Debug only. Ticks we spent filtering and summing block of I2S data
+        q['proc_ticks'] = ticks_ms() - start_tick
+
+        # Send the sums to FreeRTOS queue where main task will pick them up
+        # and further calcualte decibel values (division, logarithms, etc...)
+        xQueueSend(samples_queue, q, portMAX_DELAY)
+
+
+# Setup and main loop
+#
+# Note: Use doubles, not floats, here unless you want to pin
+#       the task to whichever core it happens to run on at the moment
+
+# If needed, now you can actually lower the CPU frequency,
+# i.e. if you want to (slightly) reduce ESP32 power consumption
+machine.freq(80000000)  # It should run as low as 80MHz
+
+samples_queue = _thread.allocate_lock()
+
+# Create the I2S reader task
+def mic_i2s_reader_task(samples_queue):
+    i2s = I2S(0)
+    i2s.readinto(samples_queue)
+
+# Create the I2S reader thread
+_thread.start_new_thread(mic_i2s_reader_task, (samples_queue,))
+
+# Initialize variables
+Leq_samples = 0
+Leq_sum_sqr = 0
+Leq_dB = 0
+
+while True:
+    # Wait for new samples
+    q = samples_queue.get()
+
+    # Calculate dB values relative to MIC_REF_AMPL and adjust for microphone reference
+    short_RMS = math.sqrt(q['sum_sqr_SPL'] / SAMPLES_SHORT)
+    short_SPL_dB = MIC_OFFSET_DB + MIC_REF_DB + 20 * math.log10(short_RMS / MIC_REF_AMPL)
+
+    # In case of acoustic overload or below noise floor measurement, report infinity Leq value
+    if short_SPL_dB > MIC_OVERLOAD_DB:
+        Leq_sum_sqr = float('inf')
+    elif math.isnan(short_SPL_dB) or (short_SPL_dB < MIC_NOISE_DB):
+        Leq_sum_sqr = float('-inf')
+
+    # Accumulate Leq sum
+    Leq_sum_sqr += q['sum_sqr_weighted']
+    Leq_samples += SAMPLES_SHORT
+
+    # When we gather enough samples, calculate new Leq value
+    if Leq_samples >= SAMPLE_RATE * LEQ_PERIOD:
+        Leq_RMS = math.sqrt(Leq_sum_sqr / Leq_samples)
+        Leq_dB = MIC_OFFSET_DB + MIC_REF_DB + 20 * math.log10(Leq_RMS / MIC_REF_AMPL)
+        Leq_sum_sqr = 0
+        Leq_samples = 0
+        
+        print("%.1f dBA" % Leq_dB)
+        
+    utime.sleep(0.01)  # Wait for 10ms
 
