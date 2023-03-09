@@ -195,90 +195,63 @@ while True:
     # Socket close()
     conn.close()
 
-#I2S Reader Task
-#FreeRTOS priority and stack size (in 32-bit words) 
+   
+SAMPLE_RATE = 48000  # Hz, fixed to design of IIR filters
+SAMPLE_BITS = 32    # bits
+SAMPLE_T = int       #MicroPython does not have int32_t, not sure if this is the proper alternative
+SAMPLES_SHORT = SAMPLE_RATE / 8  # ~125ms
+SAMPLES_LEQ = SAMPLE_RATE * LEQ_PERIOD
+DMA_BANK_SIZE = SAMPLES_SHORT / 16
+DMA_BANKS = 32
 
-I2S_TASK_PRI = 4
-I2S_TASK_STACK = 2048
+# Data we push to 'samples_queue'
 
-def mic_i2s_reader_task():
-    size_t bytes_read = 0
-    i2s_reader = i2s_read(I2S_PORT, &samples, SAMPLES_SHORT * sizeof(int32_t), &bytes_read, portMAX_DELAY)
-    
-    while True:
-        i2s_reader = i2s_read(I2S_PORT, &samples, SAMPLES_SHORT * sizeof(int32_t), &bytes_read, portMAX_DELAY)
-        TickType_t start_tick = xTaskGetTickCount()
-        int_samples = (SAMPLE_T*)&samples #not sure if this is the same w/ SAMPLE_T* int_samples = (SAMPLE_T*)&samples
-        
-        for i in range(SAMPLES_SHORT):
-            samples[i] = MIC_CONVERT(int_samples[i])
-    
+class sum_queue_t:
+    def __init__(self):
+        # Sum of squares of mic samples, after Equalizer filter
+        self.sum_sqr_SPL = 0.0
+        # Sum of squares of weighted mic samples
+        self.sum_sqr_weighted = 0.0
+        # Debug only, FreeRTOS ticks we spent processing the I2S data
+        self.proc_ticks = 0
+
+samples_queue = []
  
+# Static buffer for block of samples
 
-I2S_TASK_PRI = const(4)
-I2S_TASK_STACK = const(2048)
+samples = bytearray(SAMPLES_SHORT * 4)  # 4 bytes per 32-bit sample
 
-#SAMPLES_SHORT = const(512)
-#samples_queue = None
-#samples = bytearray(SAMPLES_SHORT * 4)
+# I2S Microphone sampling setup 
 
 def mic_i2s_init():
-    i2s.sample_rate(SAMPLE_RATE_IN_HZ)
+    i2s_config = {
+        "mode": (I2S_MODE_MASTER | I2S_MODE_RX),
+        "sample_rate": SAMPLE_RATE,
+        "bits_per_sample": SAMPLE_BITS,
+        "channel_format": I2S_CHANNEL_FMT_ONLY_LEFT,
+        "communication_format": (I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB),
+        "intr_alloc_flags": ESP_INTR_FLAG_LEVEL1,
+        "dma_buf_count": DMA_BANKS,
+        "dma_buf_len": DMA_BANK_SIZE,
+        "use_apll": True,
+        "tx_desc_auto_clear": False,
+        "fixed_mclk": 0
+    }
+    # I2S pin mapping
+    pin_config = {
+        "bck_io_num": I2S_SCK,
+        "ws_io_num": I2S_WS,
+        "data_out_num": None,  # not used
+        "data_in_num": I2S_SD
+    }
 
-def mic_i2s_reader_task():
-    mic_i2s_init()
+    i2s_driver_install(I2S_PORT, i2s_config, 0, None)
+
+    if MIC_TIMING_SHIFT > 0:
+        # Undocumented (?!) manipulation of I2S peripheral registers
+        # to fix MSB timing issues with some I2S microphones
+        I2S_TIMING_REG(I2S_PORT) |= BIT(9)
+        I2S_CONF_REG(I2S_PORT) |= I2S_RX_MSB_SHIFT
+
+    i2s_set_pin(I2S_PORT, pin_config)
     
-    while True:
-        bytes_read = i2s.readinto(samples, timeout=0)
-        
-        start_tick = ticks_ms()
-
-        int_samples = uio.BytesIO(samples)
-        for i in range(SAMPLES_SHORT):
-            int_samples_i = int.from_bytes(int_samples.read(4), 'little')
-            samples[i*4:i*4+4] = int_samples_i.to_bytes(4, 'little')
-
-        sum_sqr_SPL = sum_queue_t.filter(samples, samples, SAMPLES_SHORT)
-        sum_sqr_weighted = weighting_queue_t.filter(samples, samples, SAMPLES_SHORT)
-
-        proc_ticks = ticks_ms() - start_tick
-        
-        q = sum_queue_t(sum_sqr_SPL, sum_sqr_weighted, proc_ticks)
-        
-        uos.dupterm(None, 1)
-        uos.dupterm(uart(0, 115200), 1)
-        print(q)
-
-        samples_queue.put(q)
-
-def setup():
-    uos.dupterm(None, 1)
-    uos.dupterm(uart(0, 115200), 1)
-
-    i2s.deinit()
-
-    samples_queue = queue.Queue(8)
-
-    mic_i2s_reader_task_handle = _thread.start_new_thread(mic_i2s_reader_task, (None,))
-
-    Leq_samples = 0
-    Leq_sum_sqr = 0
-    Leq_dB = 0
-
-    while True:
-        q = samples_queue.get()
-        
-        short_RMS = sqrt(q.sum_sqr_SPL / SAMPLES_SHORT)
-        short_SPL_dB = MIC_OFFSET_DB + MIC_REF_DB + 20 * log10(short_RMS / MIC_REF_AMPL)
-
-        if short_SPL_dB > MIC_OVERLOAD_DB:
-            Leq_sum_sqr = inf
-        elif isnan(short_SPL_dB) or short_SPL_dB < MIC_NOISE_DB:
-            Leq_sum_sqr = -inf
-
-        Leq_sum_sqr += q.sum_sqr_weighted
-        Leq_samples += SAMPLES_SHORT
-
-        if Leq_samples >= SAMPLE_RATE * LEQ_PERIOD:
-            Leq_RMS = sqrt(Leq_sum_sqr / Leq_samples)
-            Leq
