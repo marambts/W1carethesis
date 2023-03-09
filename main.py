@@ -195,7 +195,8 @@ while True:
     # Socket close()
     conn.close()
 
-   
+#Initializing an I2S microphone for Sampling
+
 SAMPLE_RATE = 48000  # Hz, fixed to design of IIR filters
 SAMPLE_BITS = 32    # bits
 SAMPLE_T = int       #MicroPython does not have int32_t, not sure if this is the proper alternative
@@ -253,3 +254,11 @@ def mic_i2s_init():
 
     i2s_set_pin(I2S_PORT, pin_config)
     
+#I2S Reader Task
+#FreeRTOS priority and stack size in 32 bit words)
+
+I2S_TASK_PRI = 4
+I2S_TASK_STACK = 2048
+
+
+
