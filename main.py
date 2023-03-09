@@ -202,7 +202,8 @@ while True:
 SAMPLE_RATE = 48000  # Hz, fixed to design of IIR filters
 SAMPLE_BITS = 32    # bits
 SAMPLE_T = int       #MicroPython does not have int32_t, not sure if this is the proper alternative
-SAMPLES_SHORT = SAMPLE_RATE / 8  # ~125ms
+SAMPLES_SHORT = int(SAMPLE_RATE/8)  # ~125ms
+LEQ_PERIOD = 1 #seconds (s)
 SAMPLES_LEQ = SAMPLE_RATE * LEQ_PERIOD
 DMA_BANK_SIZE = SAMPLES_SHORT / 16
 DMA_BANKS = 32
@@ -222,7 +223,9 @@ samples_queue = []
  
 # Static buffer for block of samples
 
-samples = bytearray(SAMPLES_SHORT * 4)  # 4 bytes per 32-bit sample
+import array
+
+samples = array.array('f', [0.0] * SAMPLES_SHORT)
 
 # I2S Microphone sampling setup 
 
@@ -250,9 +253,6 @@ def mic_i2s_init():
 
     i2s_driver_install(I2S_PORT, i2s_config, 0, None)
 
-    if MIC_TIMING_SHIFT > 0:
-        I2S_TIMING_REG(I2S_PORT) |= BIT(9)
-        I2S_CONF_REG(I2S_PORT) |= I2S_RX_MSB_SHIFT
 
     i2s_set_pin(I2S_PORT, pin_config)
     
