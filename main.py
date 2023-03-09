@@ -241,15 +241,13 @@ def mic_i2s_init():
     pin_config = {
         "bck_io_num": I2S_SCK,
         "ws_io_num": I2S_WS,
-        "data_out_num": None,  # not used
+        "data_out_num": None,
         "data_in_num": I2S_SD
     }
 
     i2s_driver_install(I2S_PORT, i2s_config, 0, None)
 
     if MIC_TIMING_SHIFT > 0:
-        # Undocumented (?!) manipulation of I2S peripheral registers
-        # to fix MSB timing issues with some I2S microphones
         I2S_TIMING_REG(I2S_PORT) |= BIT(9)
         I2S_CONF_REG(I2S_PORT) |= I2S_RX_MSB_SHIFT
 
