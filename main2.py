@@ -373,7 +373,7 @@ def mic_i2s_init():
 I2S_TASK_PRI = 4
 I2S_TASK_STACK = 2048
 
-def mic_i2s_reader_task(parameter):
+def mic_i2s_reader_task():
     mic_i2s_init()
 
     # Discard first block, microphone may have startup time (i.e. INMP441 up to 83ms)
