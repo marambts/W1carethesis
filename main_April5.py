@@ -14,7 +14,10 @@ sck_pin = Pin(2)   # Serial clock output
 ws_pin = Pin(15)    # Word clock output
 sd_pin = Pin(13)    # Serial data output
 
-
+import array
+import queue
+import struct
+import esp32
 
 
 #WAV
@@ -315,62 +318,134 @@ def AWeight_Filter(input_signal, num_sos=3, gain= 0.16999494814743, sos=[[-2.000
     # Return the filtered signal
     return a_output_signal
 
-SAMPLE_RATE = 48000  # Hz, fixed to design of IIR filters
-SAMPLE_BITS = 32    # bits
-SAMPLE_T = int       #MicroPython does not have int32_t, not sure if this is the proper alternative
-SAMPLES_SHORT = int(SAMPLE_RATE/8)  # ~125ms
-LEQ_PERIOD = 1 #seconds (s)
-SAMPLES_LEQ = SAMPLE_RATE * LEQ_PERIOD
-DMA_BANK_SIZE = SAMPLES_SHORT / 16
+
 DMA_BANKS = 32
+SAMPLES_SHORT = (SAMPLE_RATE / 8) #~125ms
+DMA_BANK_SIZE = int(SAMPLES_SHORT / 16) #calculated as float but needs int used as argument for i2s config
+SAMPLE_T = 0 #not sure if dapat bang SAMPLE_T = int() kasi built-in function siya eh
+
+class sum_queue_t:
+    def __init__(self):
+        # Sum of squares of mic samples, after Equalizer filter
+        self.sum_sqr_SPL = 0.0
+        # Sum of squares of weighted mic samples
+        self.sum_sqr_weighted = 0.0
+        # Debug only, FreeRTOS ticks we spent processing the I2S data
+        self.proc_ticks = 0
 
 
-import machine
-import array
+def mic_i2s_init():
+    i2s_config = {
+        "mode": (I2S_MODE_MASTER | I2S_MODE_RX),
+        "sample_rate": SAMPLE_RATE,
+        "bits_per_sample": SAMPLE_BITS,
+        "channel_format": I2S_CHANNEL_FMT_ONLY_LEFT,
+        "communication_format": (I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB),
+        "intr_alloc_flags": ESP_INTR_FLAG_LEVEL1,
+        "dma_buf_count": DMA_BANKS,
+        "dma_buf_len": DMA_BANK_SIZE,
+        "use_apll": True,
+        "tx_desc_auto_clear": False,
+        "fixed_mclk": 0
+    }
+    # I2S pin mapping
+    pin_config = {
+        "bck_io_num": I2S_SCK,
+        "ws_io_num": I2S_WS,
+        "data_out_num": None,
+        "data_in_num": I2S_SD
+    }
 
-# Configure the I2S interface
-i2s = machine.I2S(
-    0,              # I2S bus ID (0 or 1)
-    sck=machine.Pin(2),  # I2S clock pin
-    ws=machine.Pin(15),   # I2S word select pin
-    sd=machine.Pin(13),    # I2S data pin
-    mode=I2S.RX,
-    bits=32,
-    format=I2S.MONO,
-    rate=48000,
-    ibuf=48000
-)
-
-# Set the block duration in milliseconds
-block_duration_ms = 125
-
-# Calculate the buffer size for each block based on the sample rate and block duration
-sample_rate = 48000
-block_size = (sample_rate // 1000) * block_duration_ms
-
-# Create a buffer to hold the sampled data for the current block
-buffer = bytearray(block_size)
+    esp32.i2s_driver_install(I2S_PORT, i2s_config, 0, None)
 
 
-# Create an instance of the DC blocker filter
-num_sos = 1
-gain = 1
-#sos = [dc_coeffs.b1, dc_coeffs.b2, dc_coeffs.a1, dc_coeffs.a2]
-#dc_iir_filter = SOS_IIR_Filter(num_sos=num_sos, gain=gain, sos=sos)
+    esp32.i2s_set_pin(I2S_PORT, pin_config)
+    
 
+# I2S Reader Task
 
-while True:
-    # Sample I2S data into the buffer for the current block
+I2S_TASK_PRI = 4
+I2S_TASK_STACK = 2048
+SAMPLE_BITS = 32
+MIC_BITS = 24
+samples_queue = []
+
+def mic_i2s_reader_task():
+    mic_i2s_init()
+    buffer = bytearray(SAMPLES_SHORT * sizeof(SAMPLE_T))
     i2s.readinto(buffer)
 
-    # Process the sampled data for the current block
-    # ...
-    #print(list(buffer))
-    data = array.array('l', buffer)
-    #print(list(data))
-    
-    #dcfiltered_data = dc_iir_filter.filter(data)
-    #print(list(filtered_data))
+    while True:
+        
+        i2s.readinto(buffer) 
+        
 
-    # Wait for the next block
-    time.sleep_ms(block_duration_ms)
+        start_tick = utime.ticks_ms()
+
+        def MIC_CONVERT(s):
+            return s >> (SAMPLE_BITS - MIC_BITS) 
+
+        int_samples = array.array('l', buffer)
+
+        for i in range(len(int_samples)):
+            samples = array.array('f', [MIC_CONVERT(int_samples[i])
+        
+
+       
+        q.sum_sqr_SPL = MIC_EQUALIZER.filter(samples, samples, SAMPLES_SHORT)
+
+        
+        q.sum_sqr_weighted = WEIGHTING.filter(samples, samples, SAMPLES_SHORT)
+
+        q.proc_ticks = utime.ticks_ms() - start_tick
+
+    
+        samples_queue.put(q)
+                                        
+MIC_OFFSET_DB = 3.0103 
+MIC_REF_DB = 94.0
+MIC_REF_AMPL = pow(10, (MIC_SENSITIVITY)/20) * ((1<<(MIC_BITS-1))-1);
+MIC_OVERLOAD_DB = 120.0
+MIC_NOISE_DB = -87
+LEQ_PERIOD = 1.0
+
+samples_queue = queue.Queue(8)
+
+#main loop  
+
+def setup():
+    machine.freq(80000000)
+    uart = machine.UART(1, 115200)
+    time.sleep_ms(1000) 
+
+    #task = asyncio.create_task(mic_i2s_reader_task())
+    
+    Leq_samples = 0
+    Leq_sum_sqr = 0
+    Leq_dB = 0
+
+    while True:
+
+        q = samples_queue.getnowait()
+
+        short_RMS = math.sqrt((q[sum_sqr_SPL]) / SAMPLES_SHORT)
+        
+        short_SPL_dB = MIC_OFFSET_DB + MIC_REF_DB + 20 * math.log10(short_RMS / MIC_REF_AMPL)
+
+        if short_SPL_dB > MIC_OVERLOAD_DB:
+            Leq_sum_sqr = ('inf')
+
+        elif math.isnan(short_SPL_dB) or (short_SPL_dB < MIC_NOISE_DB):
+            Leq_sum_sqr = ('-inf')
+
+        Leq_sum_sqr += q[sum_sqr_weighted]
+        Leq_samples += SAMPLES_SHORT
+
+        if Leq_samples >= SAMPLE_RATE * LEQ_PERIOD:
+            Leq_RMS = math.sqrt(Leq_sum_sqr / Leq_samples)
+            Leq_dB = MIC_OFFSET_DB + MIC_REF_DB + 20 * math.log10(Leq_RMS / MIC_REF_AMPL)
+            Leq_sum_sqr = 0
+            Leq_samples = 0
+            uart.write("%.1f dBA \n" % Leq_dB)
+                                        
+setup()
