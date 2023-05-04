@@ -3,12 +3,12 @@
 import machine
 import time
 import math
-import utime
+#import utime
 
 # I2S sensor initializations
 import os
 from machine import I2S
-from machine import Pin\
+from machine import Pin
 # ESP32
 sck_pin = Pin(2)   # Serial clock output
 ws_pin = Pin(15)    # Word clock output
@@ -18,61 +18,6 @@ import array
 import queue
 import struct
 import esp32
-
-
-#WAV
-RECORD_TIME_IN_SECONDS = 10
-SAMPLE_RATE_IN_HZ = 48000
-
-
-
-#======= USER CONFIGURATION =======
-
-WAV_SAMPLE_SIZE_IN_BITS = 32
-WAV_SAMPLE_SIZE_IN_BYTES = WAV_SAMPLE_SIZE_IN_BITS // 8
-MIC_SAMPLE_BUFFER_SIZE_IN_BYTES = 4096
-SDCARD_SAMPLE_BUFFER_SIZE_IN_BYTES = MIC_SAMPLE_BUFFER_SIZE_IN_BYTES // 2 # why divide by 2? only using 16-bits of 32-bit samples
-NUM_SAMPLE_BYTES_TO_WRITE = RECORD_TIME_IN_SECONDS * SAMPLE_RATE_IN_HZ * WAV_SAMPLE_SIZE_IN_BYTES
-NUM_SAMPLES_IN_DMA_BUFFER = 320
-NUM_CHANNELS = 1
-
-# ************************
-# snip_16_mono():  snip 16-bit samples from a 32-bit mono sample stream
-# assumption: I2S configuration for mono microphone.  e.g. I2S channelformat = ONLY_LEFT or ONLY_RIGHT
-# example snip:
-#   samples_in[] =  [0x44, 0x55, 0xAB, 0x77, 0x99, 0xBB, 0x11, 0x22]
-#   samples_out[] = [0xAB, 0x77, 0x11, 0x22]
-#   notes:
-#       samples_in[] arranged in little endian format:
-#           0x77 is the most significant byte of the 32-bit sample
-#           0x44 is the least significant byte of the 32-bit sample
-#
-# returns:  number of bytes snipped
-def snip_16_mono(samples_in, samples_out):
-    num_samples = len(samples_in) // 4
-    for i in range(num_samples):
-        samples_out[2*i] = samples_in[4*i + 2]
-        samples_out[2*i + 1] = samples_in[4*i + 3]
-
-    return num_samples * 2
-
-def create_wav_header(sampleRate, bitsPerSample, num_channels, num_samples):
-    datasize = num_samples * num_channels * bitsPerSample // 8
-    o = bytes("RIFF",'ascii')                                                   # (4byte) Marks file as RIFF
-    o += (datasize + 36).to_bytes(4,'little')                                   # (4byte) File size in bytes excluding this and RIFF marker
-    o += bytes("WAVE",'ascii')                                                  # (4byte) File type
-    o += bytes("fmt ",'ascii')                                                  # (4byte) Format Chunk Marker
-    o += (32).to_bytes(4,'little')                                              # (4byte) Length of above format data
-    o += (1).to_bytes(2,'little')                                               # (2byte) Format type (1 - PCM)
-    o += (num_channels).to_bytes(2,'little')                                    # (2byte)
-    o += (sampleRate).to_bytes(4,'little')                                      # (4byte)
-    o += (sampleRate * num_channels * bitsPerSample // 8).to_bytes(4,'little')  # (4byte)
-    o += (num_channels * bitsPerSample // 8).to_bytes(2,'little')               # (2byte)
-    o += (bitsPerSample).to_bytes(2,'little')                                   # (2byte)
-    o += bytes("data",'ascii')                                                  # (4byte) Data Chunk Marker
-    o += (datasize).to_bytes(4,'little')                                        # (4byte) Data size in bytes
-    return o
-
 
 
 audio_in = I2S(0,
@@ -86,50 +31,7 @@ audio_in = I2S(0,
                ibuf=48000
                )
 
-wav = open('mic_left_channel.wav','wb')
-
-
-# create header for WAV file and write to SD card
-wav_header = create_wav_header(
-    SAMPLE_RATE_IN_HZ,
-    WAV_SAMPLE_SIZE_IN_BITS,
-    NUM_CHANNELS,
-    SAMPLE_RATE_IN_HZ * RECORD_TIME_IN_SECONDS
-)
-num_bytes_written = wav.write(wav_header)
-
-# allocate sample arrays
-#   memoryview used to reduce heap allocation in while loop
-
-#6  second buffer
-mic_samples = bytearray(6400)
-mic_samples_mv = memoryview(mic_samples)
-
-num_sample_bytes_written_to_wav = 0
-
-print('Starting')
-# read 32-bit samples from I2S microphone, snip upper 16-bits, write snipped samples to WAV file
-while num_sample_bytes_written_to_wav < 192000:
-    try:
-        num_bytes_read_from_mic = audio_in.readinto(mic_samples_mv)
-        if num_bytes_read_from_mic > 0:
-            # snip upper 16-bits from each 32-bit microphone sample
-            print('%d sample bytes read from i2s' % num_bytes_read_from_mic)
-            num_bytes_written = wav.write(mic_samples_mv[:num_bytes_read_from_mic])
-
-            num_sample_bytes_written_to_wav += num_bytes_written
-    except (KeyboardInterrupt, Exception) as e:
-        print('caught exception {} {}'.format(type(e).__name__, e))
-        break
-
-
-wav.close()
-
-audio_in.deinit()
-
-print('%d sample bytes written to WAV file' % num_sample_bytes_written_to_wav)
-print('Done')
-
+#audio_in.deinit()
 
 #IIR Filters
 
@@ -318,7 +220,7 @@ def AWeight_Filter(input_signal, num_sos=3, gain= 0.16999494814743, sos=[[-2.000
     # Return the filtered signal
     return a_output_signal
 
-
+SAMPLE_RATE = 48000
 DMA_BANKS = 32
 SAMPLES_SHORT = (SAMPLE_RATE / 8) #~125ms
 DMA_BANK_SIZE = int(SAMPLES_SHORT / 16) #calculated as float but needs int used as argument for i2s config
@@ -376,32 +278,26 @@ def mic_i2s_reader_task():
     i2s.readinto(buffer)
 
     while True:
-        
         i2s.readinto(buffer) 
-        
-
         start_tick = utime.ticks_ms()
 
         def MIC_CONVERT(s):
-            return s >> (SAMPLE_BITS - MIC_BITS) 
-
+            return s >> (SAMPLE_BITS - MIC_BITS)
+        
         int_samples = array.array('l', buffer)
 
         for i in range(len(int_samples)):
-            samples = array.array('f', [MIC_CONVERT(int_samples[i])
-        
+            samples = array.array('f', [MIC_CONVERT(int_samples[i])])
+            q.sum_sqr_SPL = MIC_EQUALIZER.filter(samples, samples, SAMPLES_SHORT)
+            q.sum_sqr_weighted = WEIGHTING.filter(samples, samples, SAMPLES_SHORT)
+            q.proc_ticks = utime.ticks_ms() - start_tick
+            samples_queue.put(q)
 
-       
-        q.sum_sqr_SPL = MIC_EQUALIZER.filter(samples, samples, SAMPLES_SHORT)
+class S_Queueing:
+    def __init__(self):
+        self.Queue = 0.0
 
-        
-        q.sum_sqr_weighted = WEIGHTING.filter(samples, samples, SAMPLES_SHORT)
-
-        q.proc_ticks = utime.ticks_ms() - start_tick
-
-    
-        samples_queue.put(q)
-                                        
+MIC_SENSITIVITY = -26
 MIC_OFFSET_DB = 3.0103 
 MIC_REF_DB = 94.0
 MIC_REF_AMPL = pow(10, (MIC_SENSITIVITY)/20) * ((1<<(MIC_BITS-1))-1);
@@ -425,16 +321,11 @@ def setup():
     Leq_dB = 0
 
     while True:
-
-        q = samples_queue.getnowait()
-
-        short_RMS = math.sqrt((q[sum_sqr_SPL]) / SAMPLES_SHORT)
-        
+        q = samples_queue.get()
+        short_RMS = math.sqrt((q[sum_sqr_SPL]) / SAMPLES_SHORT)       
         short_SPL_dB = MIC_OFFSET_DB + MIC_REF_DB + 20 * math.log10(short_RMS / MIC_REF_AMPL)
-
         if short_SPL_dB > MIC_OVERLOAD_DB:
             Leq_sum_sqr = ('inf')
-
         elif math.isnan(short_SPL_dB) or (short_SPL_dB < MIC_NOISE_DB):
             Leq_sum_sqr = ('-inf')
 
@@ -446,6 +337,7 @@ def setup():
             Leq_dB = MIC_OFFSET_DB + MIC_REF_DB + 20 * math.log10(Leq_RMS / MIC_REF_AMPL)
             Leq_sum_sqr = 0
             Leq_samples = 0
-            uart.write("%.1f dBA \n" % Leq_dB)
+            #uart.write("%.1f dBA \n" % Leq_dB)
+            print("%.1f dBA \n", Leq_dB)
                                         
 setup()
