@@ -20,7 +20,7 @@ import struct
 import esp32
 
 
-audio_in = I2S(0,
+audio_in = I2S(1,
                sck=sck_pin,
                ws=ws_pin,
                sd=sd_pin,
