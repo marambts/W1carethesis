@@ -11,8 +11,8 @@ The internal flash of the ESP32 is not enough hence the need to run FSBrowser.
 #define I2S_SCK 32
 #define I2S_PORT I2S_NUM_0
 #define I2S_SAMPLE_RATE   (16000) //16000 maayos
-#define I2S_SAMPLE_BITS   (16) //16 maayos
-#define I2S_READ_LEN      (16*1024) //16*1024 maayos
+#define I2S_SAMPLE_BITS   (16)
+#define I2S_READ_LEN      (16 * 1024)
 #define RECORD_TIME       (5) //Seconds
 #define I2S_CHANNEL_NUM   (1)
 #define FLASH_RECORD_SIZE (I2S_CHANNEL_NUM * I2S_SAMPLE_RATE * I2S_SAMPLE_BITS / 8 * RECORD_TIME)
@@ -26,7 +26,7 @@ void setup() {
   Serial.begin(115200);
   SPIFFSInit();
   i2sInit();
-  xTaskCreate(i2s_adc, "i2s_adc", 512*2, NULL, 1, NULL); //remove /3
+  xTaskCreate(i2s_adc, "i2s_adc", 1024 * 2, NULL, 1, NULL);
 }
 
 void loop() {
@@ -61,8 +61,8 @@ void i2sInit(){
     .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
     .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB),
     .intr_alloc_flags = 0,
-    .dma_buf_count = 64, //64 
-    .dma_buf_len = 1024, //1024
+    .dma_buf_count = 64,
+    .dma_buf_len = 1024,
     .use_apll = 1
   };
 
