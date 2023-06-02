@@ -19,6 +19,11 @@ import uasyncio as asyncio
 from machine import I2S
 from machine import Pin
 from machine import SDCard
+import gc
+gc.enable()
+gc.collect()
+
+
 
 # ======= I2S CONFIGURATION =======
 
@@ -31,7 +36,7 @@ BUFFER_LENGTH_IN_BYTES = 40000
 # ======= AUDIO CONFIGURATION =======
 
 WAV_FILE = "mic.wav"
-RECORD_TIME_IN_SECONDS = 5
+RECORD_TIME_IN_SECONDS = 1
 WAV_SAMPLE_SIZE_IN_BITS = 16
 FORMAT = I2S.MONO
 SAMPLE_RATE_IN_HZ = 44100
@@ -82,7 +87,7 @@ async def record_wav_to_sdcard(audio_in, wav):
     )
     
     num_bytes_written = wav.write(wav_header)
-    
+    gc_start = gc.mem_free()
     start = time.ticks_us()
     sreader = asyncio.StreamReader(audio_in)
     end = time.ticks_us()
@@ -90,18 +95,15 @@ async def record_wav_to_sdcard(audio_in, wav):
     # memoryview used to reduce heap allocation
     mic_samples = bytearray(10000)
     mic_samples_mv = memoryview(mic_samples)
-    #wav_samples = bytearray(5000)
-    #wav_samples_mv = memoryview(wav_samples)
 
-    out_samples = bytearray(10000)
-    out_samples_mv = memoryview(mic_samples)
+    #out_samples = bytearray(10000)
+    #out_samples_mv = memoryview(mic_samples)
 
     num_sample_bytes_written_to_wav = 0
 
     # continuously read audio samples from I2S hardware
-    # and write them to a WAV file stored on a SD card
     print("Recording size: {} bytes".format(RECORDING_SIZE_IN_BYTES))
-    print("==========  START RECORDING ==========")
+    print("==========  START ==========")
     
     wavdelay = 0
     while num_sample_bytes_written_to_wav < RECORDING_SIZE_IN_BYTES:
@@ -109,45 +111,57 @@ async def record_wav_to_sdcard(audio_in, wav):
         # read samples from the I2S peripheral
         num_bytes_read_from_mic = await sreader.readinto(mic_samples_mv)
         
-        # write samples to WAV file
+        # write samples
         if num_bytes_read_from_mic > 0:
             wav_timewrite = time.ticks_us()
             #num_bytes_snipped = snip_16_mono(mic_samples_mv[:num_bytes_read_from_mic], wav_samples_mv)
             #num_bytes_to_write = min(num_bytes_snipped, RECORDING_SIZE_IN_BYTES - num_sample_bytes_written_to_wav)
             num_bytes_to_write = min(num_bytes_read_from_mic, RECORDING_SIZE_IN_BYTES - num_sample_bytes_written_to_wav)
             
-            #write wav  
+            #write   
             num_bytes_written = wav.write(mic_samples_mv[:num_bytes_to_write])
             num_sample_bytes_written_to_wav += num_bytes_written
+            
+            #write buffer
+            #swriter.out_buf = out_samples_mv[:num_bytes_read_from_mic]
+            #num_sample_bytes_written_to_wav += num_bytes_written
+            
             wav_deduct = time.ticks_diff(time.ticks_us(), wav_timewrite)
             wavdelay += wav_deduct
 
-    print("==========  DONE RECORDING ==========")
+    print("==========  STOP ==========")
     # cleanup
     wav.close()
     audio_in.deinit()
     realend = time.ticks_diff(time.ticks_us(), start);
     print("Block Latency over", RECORD_TIME_IN_SECONDS,  "second:")
     print("Asyncio I2S Data Stream Latency:", time.ticks_diff(end, start)/1000000, "seconds or", time.ticks_diff(end, start), "microseconds")
-    #print("Wavdelay", wavdelay/1000000 -5, "seconds")
     print("Asyncio Buffer Write Latency:", realend/1000000 - wavdelay/1000000, "seconds or", realend - wavdelay, "microseconds")
+    print("Total Latency Block 1 Continuous Stream:", time.ticks_diff(end, start)/1000000 + realend/1000000 - wavdelay/1000000, "seconds")
+    print("Total Latency + WAV.write delay:", time.ticks_diff(end, start)/1000000 + realend/1000000 - RECORD_TIME_IN_SECONDS, "seconds")
+    print('\n')
+    print("RAM Heap Memory after", RECORD_TIME_IN_SECONDS,  "second:")
+    print("Memory Allocation:", gc_start, "bytes of heap RAM are allocated")
+    print("Free Memory Left:", gc.mem_free(), "bytes of available heap RAM")
+    print("Memory Used:", gc_start - gc.mem_free(), "bytes of heap RAM used")
+
+
+
+async def main(audio_in, wav):
+    i2splay = asyncio.create_task(record_wav_to_sdcard(audio_in, wav))
+    #task_a = asyncio.create_task(another_task("task a"))
+    #task_b = asyncio.create_task(another_task("task b"))
+    #task_c = asyncio.create_task(another_task("task c"))
     
-
-
+    while True:
+        await asyncio.sleep_ms(10)
+        
 async def another_task(name):
+    #IIR Filters
     while True:
         await asyncio.sleep(urandom.randrange(2, 5))
         print("{} woke up".format(name))
         time.sleep_ms(10)  # simulates task doing something
-
-
-async def main(audio_in, wav):
-    play = asyncio.create_task(record_wav_to_sdcard(audio_in, wav))
-    # keep the event loop active
-    while True:
-        await asyncio.sleep_ms(10)
-
-
 
 audio_in = I2S(
     I2S_ID,
@@ -164,8 +178,6 @@ audio_in = I2S(
 wav = open("mic.wav", "wb")
 asyncio.run(main(audio_in, wav))
 wav.close()
-
-
 
 audio_in.deinit()
     
