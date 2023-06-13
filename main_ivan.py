@@ -113,7 +113,6 @@ async def audio_filter():
     buffer_array = [int(i) for i in buffer_mv]
     #print(buffer_array)
     
-    sum_buffer = [sum(buffer_array)]
     
     #...
     #code for filters
@@ -153,7 +152,7 @@ async def setup():
     iterations = 8 #125ms * 8 = 1s
     
     for i in range(iterations):
-        audio_filter()
+        await audio_filter()
         clear_data()
   
     Leq_samples = 0
