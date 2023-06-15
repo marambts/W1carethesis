@@ -122,13 +122,9 @@ async def audio_filter():
    
     #code for filters
     
-    q.sum_sqr_SPL.extend(sum_buffer)
-    q.sum_sqr_weighted.extend(sum_buffer)
+    q.sum_sqr_SPL.extend(buffer_array)
+    q.sum_sqr_weighted.extend(buffer_array)
     
-    #i assume here that the outputs of the filtered data are put in an array
-    laeq_array.extend('IIR filter ouput variable')
-    #print(laeq_array)
-
 
 async def clear_data():
     global buffer
