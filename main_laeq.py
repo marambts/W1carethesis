@@ -41,7 +41,7 @@ FORMAT = I2S.MONO
 SAMPLE_RATE_IN_HZ = 44100
 
 WAV_FILE = "mic.wav" #for validation purposes only
-RECORD_TIME_IN_SECONDS = 5 ##for validation purposes only
+RECORD_TIME_IN_SECONDS = 1 ##for validation purposes only
 WAV_SAMPLE_SIZE_IN_BITS = 16
 
 audio_in = I2S(
@@ -54,7 +54,7 @@ audio_in = I2S(
     format=I2S.MONO,
     rate=SAMPLE_RATE_IN_HZ,
     ibuf=BUFFER_LENGTH_IN_BYTES, #increase this when memory leaks, but tradeoff latency
-
+)
 # ======= VALIDATION FUNCTIONS FOR EXPORTING WAV =======
 
 format_to_channels = {I2S.MONO: 1, I2S.STEREO: 2}
