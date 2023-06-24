@@ -5,10 +5,9 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="760e07c4-1f93-447c-88b4-13e978f70f77" name="Changes" comment="Main MFCC codes added">
-      <change afterPath="$PROJECT_DIR$/exportToHTML/main_mfcc.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/filter_bank.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/mfcc_buffer.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/mfccs.csv" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/main_mfcc.py" beforeDir="false" afterPath="$PROJECT_DIR$/mfcc_bytestring.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/mfcc.py" beforeDir="false" afterPath="$PROJECT_DIR$/mfcc_integer.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/mfcc_2.py" beforeDir="false" afterPath="$PROJECT_DIR$/mfcc_2.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />

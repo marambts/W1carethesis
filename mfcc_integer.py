@@ -6,7 +6,6 @@ import csv
 #start time for block 1
 st1 = time.time()
 
-
 sample_rate = 44100
 
 with wave.open("download.wav") as w:
