@@ -1,5 +1,6 @@
 import math
 import wave
+import numpy as np
 import time
 
 
@@ -12,39 +13,11 @@ def read_wave_file(filename):
         num_frames = w.getnframes()
         return w.readframes(num_frames)
 
+def convert_bytes_to_array(audio_data):
+    return np.frombuffer(audio_data, dtype=np.int16)
 
-def convert_bytes_to_int(audio_data, sample_width):
-    audio_data_int = []
-    value = 0
-    for i in range(len(audio_data)):
-        byte = audio_data[i]
-        value |= byte << (8 * (i % sample_width))
-
-        if i % sample_width == sample_width - 1:
-            if value >= (1 << (8 * sample_width - 1)):
-                value -= 1 << (8 * sample_width)
-            audio_data_int.append(value)
-            value = 0
-
-    print(audio_data_int)
-    return audio_data_int
-
-
-def max_abs_value(lst):
-    max_abs = None
-    for num in lst:
-        abs_val = abs(num)
-        if max_abs is None or abs_val > max_abs:
-            max_abs = abs_val
-    return max_abs
-
-
-def divide_list(lst, divisor):
-    result = []
-    for num in lst:
-        result.append(num / divisor)
-    return result
-
+def normalize(audio_data):
+    return audio_data / max(abs(audio_data))
 
 def compute_filter_bank(sample_rate, num_filters):
     filter_bank = []
@@ -66,7 +39,7 @@ def compute_filter_bank(sample_rate, num_filters):
 
 def compute_mfccs(audio_data, sample_rate, num_samples, num_mfccs, num_filters, filter_bank):
     mfccs = []
-    num_chunks = num_samples // 512
+    num_chunks = num_samples // num_samples
     for chunk_idx in range(num_chunks):
         start_idx = chunk_idx * 512
         end_idx = min((chunk_idx + 1) * 512, num_samples)
@@ -107,9 +80,8 @@ st1 = time.time()
 
 audio_data = read_wave_file("recording_1s.wav")
 sample_width = 2
-audio_data_int = convert_bytes_to_int(audio_data, sample_width)
-result = max_abs_value(audio_data_int)
-audio_data = divide_list(audio_data_int, result)
+audio_data_int = convert_bytes_to_array(audio_data)
+#audio_data = normalize(audio_data_int)
 
 # Set up the MFCC parameters
 sample_rate = 44100
@@ -177,3 +149,4 @@ print("Execution time (DCT):", elapsed_time4, "seconds")
 print("Execution time (cepstral coefficient):", elapsed_time5, "seconds")
 print("Execution time (sum):", time, "seconds")
 print("Overall execution time:", elapsed_time, "seconds")
+
