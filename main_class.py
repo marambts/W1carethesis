@@ -136,10 +136,10 @@ def laeq_computation():
 #.........Send dB(A) reading via MQTT.............
 
 def iso():
-    current_time = time.time()
+    #current_time = time.time()
 
     # Convert seconds to a tuple representing local time
-    local_time = time.localtime(current_time)
+    local_time = time.localtime(time.time())
 
     # Format the local time in ISO 8601 format
     formatted_time = "{:04d}-{:02d}-{:02d}T{:02d}:{:02d}:{:02d}".format(
@@ -150,8 +150,8 @@ def iso():
         local_time[4],
         local_time[5]
     )
-
-    print(formatted_time)
+    return formatted_time
+    #print(formatted_time)
     
 class MQTT_client:
     def __init__(self):
