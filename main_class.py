@@ -136,8 +136,6 @@ def laeq_computation():
 #.........Send dB(A) reading via MQTT.............
 
 def iso():
-    #current_time = time.time()
-
     # Convert seconds to a tuple representing local time
     local_time = time.localtime(time.time())
 
@@ -151,7 +149,6 @@ def iso():
         local_time[5]
     )
     return formatted_time
-    #print(formatted_time)
     
 class MQTT_client:
     def __init__(self):
@@ -181,8 +178,6 @@ class MQTT_client:
         
             
         self.topic = b'jsontest/ECE199_NOISE_MONITORING'
-        
-        
     
     def make_message_staticlaeq(self,node_ID, ESP32_LAeq):
         out_msg = {}
@@ -199,6 +194,7 @@ class MQTT_client:
 
 #...............connect to wifi............
         
+        
 sta = network.WLAN(network.STA_IF)
 sta.active(True)
 
@@ -214,7 +210,9 @@ while(not sta.isconnected()):
 
 print("Connected successfully")
 
+
 #.................main setup................
+
 
 if __name__ == "__main__":
     
@@ -223,7 +221,7 @@ if __name__ == "__main__":
     PASSWORD = b'noise196_EEECARE'
     
     # import certs
-    with open('hivemq-com-chain.der') as f:
+    with open('hivemq-com-chain.der') as f: #this might expire soon
         cacert_data = f.read()
     
     client = MQTT_client()
