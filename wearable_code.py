@@ -4,7 +4,7 @@ import time
 import asyncio
 import adafruit_wave as wave
 from ulab import numpy as np
-import iir_filter
+#import iir_filter
 #............Configuration..................
 LEQ_PERIOD = 1 
 #values from microphone datasheet
@@ -16,7 +16,6 @@ MIC_BITS = 24 #mic_ref_ampl
 MIC_NOISE_DB = -87 # dB - Noise floor
 MIC_REF_AMPL = math.pow(10, (MIC_SENSITIVITY)/20) * ((1<<(MIC_BITS-1)-1)) #for short_spl_db
 
-       
 #.............initialization of variables................
 class sum_queue_t:
     def __init__(self):
@@ -31,7 +30,6 @@ class sum_queue_t:
         
 
 q = sum_queue_t()
-weight = sum_queue_t()
 #............Sampling Initialization..............
 SAMPLE_RATE = 44100 #Hz
 SAMPLE_BITS = 16 #BITS
@@ -71,11 +69,55 @@ coeffb=[0.61367941, -1.22735882, -0.61367941,  2.45471764, -0.61367941, -1.22735
 sos_a_teachman =  [[1.0000,    2.0000,    1.0000,    1.0000,    1.1720,    0.3434],
     [1.0000,   -2.0001,    1.0001,    1.0000,   -1.5582,    0.5828],
     [1.0000,   -1.9999,    0.9999,    1.0000,   -1.9743,    0.9744]]
-                
 
+class IIR2_filter:
+    """2nd order IIR filter"""
+    def __init__(self,s):
+        """Instantiates a 2nd order IIR filter
+        s -- numerator and denominator coefficients
+        """
+        self.numerator0 = s[0]
+        self.numerator1 = s[1]
+        self.numerator2 = s[2]
+        self.denominator1 = s[4]
+        self.denominator2 = s[5]
+        self.buffer1 = 0
+        self.buffer2 = 0
+
+    def filter(self,v):
+        """Sample by sample filtering
+        v -- scalar sample
+        returns filtered sample
+        """
+        input = v - (self.denominator1 * self.buffer1) - (self.denominator2 * self.buffer2)
+        output = (self.numerator1 * self.buffer1) + (self.numerator2 * self.buffer2) + input * self.numerator0
+        self.buffer2 = self.buffer1
+        self.buffer1 = input
+        return output
+    
+
+class IIR_filter:
+    """IIR filter"""
+    def __init__(self,sos):
+        """Instantiates an IIR filter of any order
+        sos -- array of 2nd order IIR filter coefficients
+        """
+        self.cascade = []
+        for s in sos:
+            self.cascade.append(IIR2_filter(s))
+
+    def filter(self,v):
+        """Sample by sample filtering
+        v -- scalar sample
+        returns filtered sample
+        """
+        for f in self.cascade:
+            v = f.filter(v)
+        return v
+    
 #......................Initialize Filters...................................
-equalize = iir_filter.IIR_filter(sos_inmp)
-aweight = iir_filter.IIR_filter(sos_a)
+equalize = IIR_filter(sos_inmp)
+aweight = IIR_filter(sos_a)
 
 #......extraction of samples from wav file.............
 
@@ -94,14 +136,14 @@ async def Laeq_computation():
     
     while q.Leq_samples < len(range(SAMPLE_RATE)):
         q.buffer = audio_data[index:index+SAMPLES_SHORT] #[0:4410] len = 4411 , type: bytes
-
-        q.Leq_sum_sqr += sum(q.buffer) #type: int
+        q.Leq_sum_sqr += sum(q.buffer)
+        q.weight = equalize.filter(aweight.filter(q.Leq_sum_sqr)) #type: int
         q.Leq_samples += SAMPLES_SHORT #type: int
-        print(q.Leq_sum_sqr, q.Leq_samples)
+        print(q.weight, q.Leq_samples)
     
     if q.Leq_samples >= SAMPLE_RATE * LEQ_PERIOD:
             #print(q.Leq_sum_sqr)
-        Leq_RMS = math.sqrt(q.Leq_sum_sqr / q.Leq_samples)
+        Leq_RMS = math.sqrt(q.weight / q.Leq_samples)
             #print(MIC_OFFSET_DB, MIC_REF_DB, Leq_RMS, MIC_REF_AMPL)
         nRF52840_LAeq = MIC_OFFSET_DB + MIC_REF_DB + 20 * math.log(Leq_RMS / MIC_REF_AMPL, 10)
         q.Leq_sum_sqr = 0
@@ -111,9 +153,7 @@ async def Laeq_computation():
 
 #async def mfcc():
 
-#.........mfcc code here.......................
-    
-
+#.........mfcc code here.......................    
 async def main():
     laeq_compute = asyncio.create_task(Laeq_computation())
     #mfcc_compute = asyncio.create_task()
