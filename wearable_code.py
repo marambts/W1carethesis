@@ -128,6 +128,7 @@ with wave.open('recording_1s.wav')as w: #kaya 1 second, di kaya 6 seconds
     #print(w.getframerate())
     #Read all frames from the WAV file
     audio_data = w.readframes(num_frames)
+    #audio_data = np.frombuffer(audio_data, dtype=np.int16)
     
 
 async def Laeq_computation():
@@ -136,14 +137,15 @@ async def Laeq_computation():
     
     while q.Leq_samples < len(range(SAMPLE_RATE)):
         q.buffer = audio_data[index:index+SAMPLES_SHORT] #[0:4410] len = 4411 , type: bytes
+        #q.weighted = [int(i) for i in q.buffer]
         q.Leq_sum_sqr += sum(q.buffer)
-        q.weight = equalize.filter(aweight.filter(q.Leq_sum_sqr)) #type: int
+        q.weighted = equalize.filter(aweight.filter(q.Leq_sum_sqr)) #type: int
         q.Leq_samples += SAMPLES_SHORT #type: int
-        print(q.weight, q.Leq_samples)
+        print(q.weighted, q.Leq_samples)
     
     if q.Leq_samples >= SAMPLE_RATE * LEQ_PERIOD:
             #print(q.Leq_sum_sqr)
-        Leq_RMS = math.sqrt(q.weight / q.Leq_samples)
+        Leq_RMS = math.sqrt(q.weighted / q.Leq_samples)
             #print(MIC_OFFSET_DB, MIC_REF_DB, Leq_RMS, MIC_REF_AMPL)
         nRF52840_LAeq = MIC_OFFSET_DB + MIC_REF_DB + 20 * math.log(Leq_RMS / MIC_REF_AMPL, 10)
         q.Leq_sum_sqr = 0
