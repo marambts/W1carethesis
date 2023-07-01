@@ -4,6 +4,7 @@ import time
 import asyncio
 import adafruit_wave as wave
 from ulab import numpy as np
+import struct
 #import iir_filter
 #............Configuration..................
 LEQ_PERIOD = 1 
@@ -137,15 +138,19 @@ async def Laeq_computation():
     
     while q.Leq_samples < len(range(SAMPLE_RATE)):
         q.buffer = audio_data[index:index+SAMPLES_SHORT] #[0:4410] len = 4411 , type: bytes
-        #q.weighted = [int(i) for i in q.buffer]
-        q.Leq_sum_sqr += sum(q.buffer)
-        q.weighted = equalize.filter(aweight.filter(q.Leq_sum_sqr)) #type: int
+        #print(q.buffer)
+        binary_string = b''.join(q.buffer)
+        float_value = struct.unpack('<f', binary_string)[0]
+        print(float_value)
+        q.weighted = pow(equalize.filter(aweight.filter(float_value)),2) #type: int
+        
+        q.Leq_sum_sqr += sum(q.weighted)
         q.Leq_samples += SAMPLES_SHORT #type: int
-        print(q.weighted, q.Leq_samples)
+        print(q.Leq_sum_sqr, q.Leq_samples)
     
     if q.Leq_samples >= SAMPLE_RATE * LEQ_PERIOD:
             #print(q.Leq_sum_sqr)
-        Leq_RMS = math.sqrt(q.weighted / q.Leq_samples)
+        Leq_RMS = math.sqrt(q.Leq_sum_sqr / q.Leq_samples)
             #print(MIC_OFFSET_DB, MIC_REF_DB, Leq_RMS, MIC_REF_AMPL)
         nRF52840_LAeq = MIC_OFFSET_DB + MIC_REF_DB + 20 * math.log(Leq_RMS / MIC_REF_AMPL, 10)
         q.Leq_sum_sqr = 0
