@@ -4,86 +4,179 @@ import math
 import utime as time
 import array
 
-# I2S sensor initializations
-import os
-import uasyncio as asyncio
+
+gc.enable()
+
+#.......wifi initialization
+import micropython
+import network
+
+# ............I2S sensor initializations.............
 from machine import I2S
 from machine import Pin
 from machine import UART
 
-#Configuration
-LEQ_PERIOD = 1
+#..........MQTT Initialization.............
+import time
+import json
+#from micropython import datetime
+import ubinascii
+import machine
+from umqtt.simple import MQTTClient
+import ussl
+#from config import BROKER_URL, USER, PASSWORD
 
+#............Configuration..................
+LEQ_PERIOD = 1 
 #values from microphone datasheet
 MIC_OFFSET_DB = 3.0103 #for short_spl_db
-MIC_SENSITIVITY = -26 #where used?
+MIC_SENSITIVITY = -26 
 MIC_REF_DB = 94 #for short_spl_db
 MIC_OVERLOAD_DB = 120.0 #dB - Acoustic overload point
-MIC_NOISE_DB = -87 # dB - Noise floor
 MIC_BITS = 24 #mic_ref_ampl
+MIC_NOISE_DB = -87 # dB - Noise floor
+MIC_REF_AMPL = math.pow(10, (MIC_SENSITIVITY)/20) * ((1<<(MIC_BITS-1)-1)) #for short_spl_db
 
-#def MIC_CONVERT(s): 
-    #return s >> (SAMPLE_BITS - MIC_BITS) #this is --> define MIC_CONVERT(s) (s >> (SAMPLE_BITS - MIC_BITS))
-    #used when converting the int mic values to floats but is already removed in the reader task
-
-#Calculate reference amplitude value at compile time
-#no concept of consterpx or pow function w double precision like in C++
-#consterpx does the process in compiler time instead of runtime, saving time and storage
-MIC_REF_AMPL = math.pow(10, (MIC_SENSITIVITY)/20) * ((1<<(MIC_BITS-1)-1)) #for short_spl_db                                                                                                                                                                                                                            
        
-
-#necessity of this class is based on how filters will be done
-class sum_queue_t: 
+#.............initialization of variables................
+class sum_queue_t:
     def __init__(self):
-        self.buffer = 0.0
-        # Sum of squares of mic samples, after Equalizer filter
-        self.sum_sqr_SPL = []
+        # raw audio samples
+        self.raw_audio = []
         # Sum of squares of weighted mic samples
-        self.sum_sqr_weighted = []
-    def clear_filters(self):
-        self.sum_sqr_SPL = []
-        self.sum_sqr_weighted = []
+        self.weighted = []
+        #Accumulated Noise Power
+        self.Leq_sum_sqr = 0
+        #Samples Counter
+        self.Leq_samples = 0
+        #self.Leq_dB = 0
 
 q = sum_queue_t()
 
-
-#Sampling
-SAMPLE_RATE = 441000 #Hz, fixed to design of IIR filters, formerly 48kHz
+#............Sampling Initialization..............
+SAMPLE_RATE = 44100 #Hz
 SAMPLE_BITS = 32 #BITS
-SAMPLE_T = 0 #int32_t
-SAMPLES_SHORT = (SAMPLE_RATE/8) #~125ms                                                     
-SAMPLES_LEQ = (SAMPLE_RATE*LEQ_PERIOD)
-DMA_BANK_SIZE = (SAMPLES_SHORT/16)
-DMA_BANKS = 32                                                      
+SAMPLES_SHORT = SAMPLE_RATE/10                                                      
+SAMPLES_LEQ = (SAMPLE_RATE*LEQ_PERIOD)                                                    
                                                       
-# I2S pin mapping
-# ESP32
+#................I2S pin mapping..................
 sck_pin = 32   # Serial clock output
 ws_pin = 25    # Word clock output
 sd_pin = 33   # Serial data output
-I2S_ID = 0 #where used?                                                    
-n = 690 #number of samples needed for 1 sec LAeq evaluation: 5512, 5512/8 = 689
+I2S_ID = 0                                                   
 
-#buffer for sampling
-buffer = bytearray(n) #what is the appropriate size?
-#calculated samples
-buffer_mv = memoryview(buffer) # provides a way to access the
-                #underlying data of an object supporting the buffer protocol without creating a new copy of the data                                               
-                #memoryview allows you to work directly with the lower level languages, no need to get everything everytime, saves time drastically
-
-#where filtered data will be stored for LAeq computation
-laeq_array = []
-
-#audio configuration
-BUFFER_LENGTH_IN_BYTES = 40000
-SAMPLE_SIZE_IN_BITS = 16
+#.................audio configuration...................
+BUFFER_LENGTH_IN_BYTES = 8192
+SAMPLE_SIZE_IN_BITS = 32
 FORMAT = I2S.MONO
-SAMPLE_RATE_IN_HZ = 16000
+SAMPLE_RATE_IN_HZ = 44100
 
-# I2S Microphone sampling setup
-async def mic_i2s_sampling():
+
+#.......................IIR Coefficients..................................
+#Once implemented, remember to recheck coefficients for Fs = 44.1kHz.
+#Recheck-able with MATLAB pwede pa i-tweak ang coefficients
+#Note that that the IIR_Filter module takes in SOS coefficients expressed as an n number of 1 x 6 matrices.
+
+#KOTOSKI Equalizer
+#SOS_IIR_Filter INMP441 = {
+#gain: 1.00197834654696, 
+sos_inmp = [[1.0000,   -1.9952,    0.9952,    1.0000,   -1.9869,    0.9870]]
+
+
+#KOTOSKI A weighting filter IIR Second Order Sections
+# B = [0.169994948147430, 0.280415310498794, -1.120574766348363, 0.131562559965936, 0.974153561246036, -0.282740857326553, -0.152810756202003]
+# A = [1.0, -2.12979364760736134, 0.42996125885751674, 1.62132698199721426, -0.96669962900852902, 0.00121015844426781, 0.04400300696788968]
+#gain: 0.169994948147430
+sos_a = [[1.0000, 3.7584,  1.0081, 1.0000,   -0.1132,   -0.0565],
+    [1.0000,   -0.1086,   -0.8914,    1.0000,   -0.0343,   -0.7922],
+    [1.0000,   -2.0003,    1.0003,    1.0000,   -1.9822,    0.9823]]
+
+#TEACHMAN - is this for A weighting only or is this cascaded equalizer + A-weighting
+#noise = dba.DBA(samples=10000, resolution=dba.B16, 
+coeffa= [1.0, -2.3604841 ,  0.83692802,  1.54849677, -0.96903429, -0.25092355,  0.1950274]
+coeffb=[0.61367941, -1.22735882, -0.61367941,  2.45471764, -0.61367941, -1.22735882,  0.61367941]
+sos_a_teachman =  [[1.0000,    2.0000,    1.0000,    1.0000,    1.1720,    0.3434],
+    [1.0000,   -2.0001,    1.0001,    1.0000,   -1.5582,    0.5828],
+    [1.0000,   -1.9999,    0.9999,    1.0000,   -1.9743,    0.9744]]
+
+class IIR2_filter:
+    """2nd order IIR filter"""
+    def __init__(self,s):
+        """Instantiates a 2nd order IIR filter
+        s -- numerator and denominator coefficients
+        """
+        self.numerator0 = s[0]
+        self.numerator1 = s[1]
+        self.numerator2 = s[2]
+        self.denominator1 = s[4]
+        self.denominator2 = s[5]
+        self.buffer1 = 0
+        self.buffer2 = 0
+
+    def filter(self,v):
+        """Sample by sample filtering
+        v -- scalar sample
+        returns filtered sample
+        """
+        input = v - (self.denominator1 * self.buffer1) - (self.denominator2 * self.buffer2)
+        output = (self.numerator1 * self.buffer1) + (self.numerator2 * self.buffer2) + input * self.numerator0
+        self.buffer2 = self.buffer1
+        self.buffer1 = input
+        return output
     
-    #uasyncio I2S config
+
+class IIR_filter:
+    """IIR filter"""
+    def __init__(self,sos):
+        """Instantiates an IIR filter of any order
+        sos -- array of 2nd order IIR filter coefficients
+        """
+        self.cascade = []
+        for s in sos:
+            self.cascade.append(IIR2_filter(s))
+
+    def filter(self,v):
+        """Sample by sample filtering
+        v -- scalar sample
+        returns filtered sample
+        """
+        for f in self.cascade:
+            v = f.filter(v)
+        return v
+    
+#......................Initialize Filters...................................
+equalize = IIR_filter(sos_inmp)
+aweight = IIR_filter(sos_a)
+
+
+#..............main code here..........................
+
+#initialize buffer size
+mic_samples = array.array('i', [0] * 4410)
+
+mic_samples_mv = memoryview(mic_samples)                                              
+ESP32_LAeq = 0
+
+def i2s_callback_rx(arg):
+    #global mic_samples
+    
+    global mic_samples_mv
+    global q
+    
+    for i in range(len(mic_samples_mv)):
+        sample = mic_samples_mv[i]
+        #shifted_sample = (sample >> 8)
+        shifted_sample = (sample >> 8)//32
+        #print(shifted_sample)
+        yield shifted_sample
+    #q.sum_sqr_weighted = [int(i) for i in mic_samples_mv]
+    
+
+
+def sampling():
+    #global mic_samples
+    global mic_samples_mv
+    
     audio_in = I2S(
         I2S_ID,
         sck=Pin(sck_pin),
@@ -94,138 +187,47 @@ async def mic_i2s_sampling():
         format=FORMAT,
         rate=SAMPLE_RATE_IN_HZ,
         ibuf=BUFFER_LENGTH_IN_BYTES,
-    )
-    
-    #for inmp441 start up time ~83ms
-    await asyncio.sleep_ms(100)
-    
-    #samples and streams the audio data
-    sreader = asyncio.StreamReader(audio_in)
-    
-    #streamed audio is read and put in buffer
-    num_read = await sreader.readinto(buffer_mv)
-    #print(buffer_mv)
+        )
+    time.sleep_ms(100)
+        
+    audio_in.irq(i2s_callback_rx)
+    num_read = audio_in.readinto(mic_samples_mv)
+    time.sleep_ms(100)
 
-#Inputs raw audio samples for filtering and outputs filtered data
-async def audio_filter():
-    global q
-    global laeq_array
-    q.clear_filters()
+def laeq_computation():
+    global ESP32_LAeq
     
-    await mic_i2s_sampling()
+    machine.freq(240000000) # It should run as low as 80MHz, can run up to 240MHZ
+    #uart = UART(0, 115200)
     
-    #this is the input for the filters
-    #we convert the stream object to int
-    buffer_array = [int(i) for i in buffer_mv]
-    #print(buffer_array)
-    
-   
-    #code for filters
-    
-    q.sum_sqr_SPL.extend(buffer_array)
-    q.sum_sqr_weighted.extend(buffer_array)
-    
+    start = time.ticks_us()
+    iterations = 10 #number of iterations to reach 44.1k samples
+    for i in range(iterations):
+        sampling()
+        #for i in range(len(q.raw_audio)):
+            #q.weighted = pow(equalize.filter(aweight.filter(q.raw_audio[i])),2)
+        #q.Leq_sum_sqr += sum(q.weighted)
+        q.Leq_sum_sqr += sum(pow(equalize.filter(aweight.filter(shifted_sample)), 2) for shifted_sample in i2s_callback_rx(None))
+        #print(q.sum_sqr_weighted)
+        q.Leq_samples += SAMPLES_SHORT
+        print(q.Leq_sum_sqr, q.Leq_samples)
+        
+    if q.Leq_samples >= SAMPLE_RATE * LEQ_PERIOD:
+        #print(q.Leq_sum_sqr)
+        Leq_RMS = math.sqrt(q.Leq_sum_sqr / q.Leq_samples)
+        #print(q.weighted, q.Leq_samples)
+        #print(MIC_OFFSET_DB, MIC_REF_DB, Leq_RMS, MIC_REF_AMPL)
+        ESP32_LAeq = MIC_OFFSET_DB + MIC_REF_DB + 20 * math.log10(Leq_RMS / MIC_REF_AMPL)
+        q.Leq_sum_sqr = 0
+        q.Leq_samples = 0
 
-async def clear_data():
-    global buffer
-    global buffer_mv
+        print("{:.1f} dBA".format(ESP32_LAeq))
     
-    #temp functions
-    #set to 0 so it can load up again
+    q.sum_sqr_weighted = []
 
-    n_clear = 0
-    buffer = bytearray(n_clear)
-    buffer_mv = memoryview(buffer)
     gc.collect()
+    end = time.ticks_us()
+    print("LAeq Reading Latency:", time.ticks_diff(end, start)/1000000, "seconds or", time.ticks_diff(end, start), "microseconds")
 
-#
-#Setup and main loop
-#
-
-async def laeq_computations():
-    
-    # If needed, now you can actually lower the CPU frequency,
-    # i.e. if you want to (slightly) reduce ESP32 power consumption
-    machine.freq(80000000) # It should run as low as 80MHz
-    uart = UART(0, 115200)
-    #device-to-device communication, mic to esp32                                               
-    asyncio.sleep_ms(1000) # Safety
-    
-    rms_array = []
-    Leq_samples = []
-    Leq_sum_sqr = []
-    Leq_dB = []
-    
-    #each iteration samples raw audio data, gets filtered data, puts in an array then clears data for the next iteration
-    #this is not queueing but rather alternative for the 8 blocks
-    iterations = 8 #125ms * 8 = 1s
-    for i in range(iterations): #for loop buffers
-        if i == 1:
-            await audio_filter()
-            Leq_sum_sqr.extend(q.sum_sqr_weighted)
-            #i think there is smth wrong here mathematically
-            Leq_samples += [Leq_sum_sqr[i] + SAMPLES_SHORT[i] for i in range(len(Leq_samples))]
-            clear_data()
-        else:
-            await audio_filter()
-            Leq_sum_sqr = [Leq_sum_sqr[i] + q.sum_sqr_weighted[i] for i in range(len(Leq_sum_sqr))]
-            #i think there is smth wrong here mathematically
-            Leq_samples += [Leq_sum_sqr[i] + SAMPLES_SHORT[i] for i in range(len(Leq_samples))]
-            rms_array.extend(q.sum_sqr_SPL)
-            clear_data()
-            
-            
-    #before it enters the while statement, all filtered data should have been added and stored in Leq_sum_sqr and Leq_samples
-
-    while True: #while loop buffers
-        #since q.sum_sqr_SPL is expected to input an array, short_RMS and short_SPL_dB outputs an array as well
-        short_RMS = [math.sqrt(rms_array[i] / SAMPLES_SHORT) for i in range(len(rms_array))]
-        short_SPL_dB = []
-        #for value in short_RMS:
-            #spl_db = MIC_OFFSET_DB + MIC_REF_DB + (20 * math.log10(value/MIC_REF_AMPL))
-            #spl_db = MIC_OFFSET_DB + MIC_REF_DB + 20 * math.log10(value / MIC_REF_AMPL)
-            #short_SPL_dB.append(spl_db)
-        #short_SPL_dB = [(MIC_OFFSET_DB + MIC_REF_DB +(20* math.log10(value/MIC_REF_AMPL))) for value in short_RMS]
-        for value in short_RMS:
-            if value > 0:
-                spl_db = MIC_OFFSET_DB + MIC_REF_DB + 20 * math.log10(value / MIC_REF_AMPL)
-            else:
-                spl_db = float('-inf')  # or any other appropriate value
-                short_SPL_dB.append(spl_db)   
-
-        # In case of acoustic overload or below noise floor measurement, report infinity Leq value
-        #This still assumes that short_SPL_dB returns an array of values
-        if any(value >MIC_OVERLOAD_DB for value in short_SPL_dB):
-            Leq_sum_sqr = float('inf')
-        elif any(math.isnan(value) or (value < MIC_NOISE_DB) for value in short_SPL_dB):
-        #elif any(math.isnan(short_SPL_dB) or (short_SPL_dB < MIC_NOISE_DB) for value in short_SPL_dB):
-            Leq_sum_sqr = float('-inf')
-                
-        # Accumulate Leq sum
-        
-
-        # When we gather enough samples, calculate new Leq value
-        for i in range(len(Leq_samples)):
-            if Leq_samples[i] >= (SAMPLE_RATE*LEQ_PERIOD):
-                Leq_RMS = math.sqrt(Leq_sum_sqr[i]/Leq_samples[i])
-                Leq_dB = MIC_OFFSET_DB + MIC_REF_DB + (20 * math.log10(Leq_RMS/MIC_REF_AMPL))
-                print("{:.1f} dBA".format(Leq_dB))
-            else:
-                print('Error in LAeq Reading...')
-                
-        rms_array = []
-        Leq_samples = []
-        Leq_sum_sqr = []
-        Leq_dB = []
-        
-            
-async def main():
-    i2s_stream = asyncio.create_task(laeq_computations())
-    
-    while True:
-        await asyncio.sleep_ms(10)
-        
-asyncio.run(main())       
-
-
-
+while True:
+    laeq_computation()
