@@ -4,9 +4,6 @@ import math
 import utime as time
 import array
 
-
-gc.enable()
-
 #.......wifi initialization
 import micropython
 import network
@@ -156,6 +153,7 @@ mic_samples = array.array('i', [0] * 4410)
 
 mic_samples_mv = memoryview(mic_samples)                                              
 ESP32_LAeq = 0
+gc.enable()
 
 def i2s_callback_rx(arg):
     #global mic_samples
@@ -200,34 +198,59 @@ def laeq_computation():
     machine.freq(240000000) # It should run as low as 80MHz, can run up to 240MHZ
     #uart = UART(0, 115200)
     
+    
+    class IIR2_filter:
+        def __init__(self,s):
+            self.numerator0 = s[0]
+            self.numerator1 = s[1]
+            self.numerator2 = s[2]
+            self.denominator1 = s[4]
+            self.denominator2 = s[5]
+            self.buffer1 = 0
+            self.buffer2 = 0
+
+        def filter(self,v):
+            input = v - (self.denominator1 * self.buffer1) - (self.denominator2 * self.buffer2)
+            output = (self.numerator1 * self.buffer1) + (self.numerator2 * self.buffer2) + input * self.numerator0
+            self.buffer2 = self.buffer1
+            self.buffer1 = input
+            return output
+    
+
+    class IIR_filter:
+        def __init__(self,sos):
+            self.cascade = []
+            for s in sos:
+                self.cascade.append(IIR2_filter(s))
+
+        def filter(self,v):
+            for f in self.cascade:
+                v = f.filter(v)
+            return v
+    
+    equalize = IIR_filter(sos_inmp)
+    aweight = IIR_filter(sos_a)
+
+    
     start = time.ticks_us()
     iterations = 10 #number of iterations to reach 44.1k samples
     for i in range(iterations):
         sampling()
-        #for i in range(len(q.raw_audio)):
-            #q.weighted = pow(equalize.filter(aweight.filter(q.raw_audio[i])),2)
-        #q.Leq_sum_sqr += sum(q.weighted)
         q.Leq_sum_sqr += sum(pow(equalize.filter(aweight.filter(shifted_sample)), 2) for shifted_sample in i2s_callback_rx(None))
-        #print(q.sum_sqr_weighted)
         q.Leq_samples += SAMPLES_SHORT
         print(q.Leq_sum_sqr, q.Leq_samples)
         
     if q.Leq_samples >= SAMPLE_RATE * LEQ_PERIOD:
-        #print(q.Leq_sum_sqr)
         Leq_RMS = math.sqrt(q.Leq_sum_sqr / q.Leq_samples)
-        #print(q.weighted, q.Leq_samples)
-        #print(MIC_OFFSET_DB, MIC_REF_DB, Leq_RMS, MIC_REF_AMPL)
         ESP32_LAeq = MIC_OFFSET_DB + MIC_REF_DB + 20 * math.log10(Leq_RMS / MIC_REF_AMPL)
         q.Leq_sum_sqr = 0
         q.Leq_samples = 0
 
         print("{:.1f} dBA".format(ESP32_LAeq))
     
-    q.sum_sqr_weighted = []
-
     gc.collect()
     end = time.ticks_us()
-    print("LAeq Reading Latency:", time.ticks_diff(end, start)/1000000, "seconds or", time.ticks_diff(end, start), "microseconds")
+    print("1-Second LAeq reading takes", time.ticks_diff(end, start)/1000000, "seconds or", time.ticks_diff(end, start), "microseconds")
 
 while True:
     laeq_computation()
