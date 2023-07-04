@@ -246,7 +246,7 @@ class MQTT_client:
                 keepalive = 60,
                 ssl_params = {
                     'key' : None,
-                    'cert' : open_cert,
+                    #'cert' : open_cert,
                     'server_side' : False,
                     'server_hostname' : BROKER_URL
                 })
@@ -305,8 +305,8 @@ if __name__ == "__main__":
     PASSWORD = b'noise196_EEECARE'
     
     # import certs
-    with open('hivemq-com-chain.der') as f:
-        open_cert = f.read()
+    #with open('hivemq-com-chain.der') as f:
+        #open_cert = f.read()
     
     client = MQTT_client()
     time.sleep(1)
@@ -319,4 +319,5 @@ if __name__ == "__main__":
     
     client.disconnect()
 
-    print("Finished sending all data.")        
+    print("Finished sending all data.") 
+    
