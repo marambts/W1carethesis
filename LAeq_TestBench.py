@@ -195,13 +195,26 @@ def laeq_computation():
     
     gc.collect()
     end = time.ticks_us()
-    print("1-Second LAeq reading took", time.ticks_diff(end, start)/1000000, "seconds or", time.ticks_diff(end, start), "microseconds", "\n")
+    print("Runtime: ", time.ticks_diff(end, start)/1000000, "seconds or", time.ticks_diff(end, start), "microseconds", "\n")
+    return ESP32_LAeq, time.ticks_diff(end, start)/1000000
 
 count = 0
+row = []
 while count < 10:
     count+=1
     print("Reading ", count)
-    laeq_computation()
+    #laeq_computation()
+    text = "%4d-%02d-%02d %02d:%02d:%02d" % time.localtime()[:6], laeq_computation()
+    row.append(text)
+    time.sleep(1)
     
     if count == 10:
         print("10-second reading is done")
+        
+with open('data.txt', 'a') as fd:
+    for val in row:
+        fd.write('"%s", %s\n' % val)
+    fd.write("\n")
+        
+#clear list
+row.clear()
