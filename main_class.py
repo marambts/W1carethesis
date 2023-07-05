@@ -24,6 +24,10 @@ import machine
 from umqtt.simple import MQTTClient
 import ussl
 
+#............syncing...................
+import usocket
+import ujson
+
 #............Configuration..................
 LEQ_PERIOD = 1 
 #values from microphone datasheet
@@ -178,11 +182,11 @@ def sampling():
         rate=SAMPLE_RATE_IN_HZ,
         ibuf=BUFFER_LENGTH_IN_BYTES,
         )
-    time.sleep_ms(100)
+    #time.sleep_ms(100)
         
     audio_in.irq(i2s_callback_rx)
     num_read = audio_in.readinto(mic_samples_mv)
-    time.sleep_ms(100)
+    #time.sleep_ms(100)
 
 def laeq_computation():
     global ESP32_LAeq
@@ -198,6 +202,7 @@ def laeq_computation():
             #q.weighted = pow(equalize.filter(aweight.filter(q.raw_audio[i])),2)
         #q.Leq_sum_sqr += sum(q.weighted)
         q.Leq_sum_sqr += sum(pow(equalize.filter(aweight.filter(shifted_sample)), 2) for shifted_sample in i2s_callback_rx(None))
+        #q.Leq_sum_sqr += sum(pow((shifted_sample), 2) for shifted_sample in i2s_callback_rx(None))
         #print(q.sum_sqr_weighted)
         q.Leq_samples += SAMPLES_SHORT
         print(q.Leq_sum_sqr, q.Leq_samples, time.ticks_diff(time.ticks_us(), start1)/1000000)
@@ -274,6 +279,29 @@ class MQTT_client:
     
     def publish(self,msg):
         self.client.publish(self.topic,msg,False,1)
+        
+
+def sync():
+    rtc = machine.RTC()
+
+    # Get current time from system clock
+    current_time = time.localtime(time.time())
+    print(current_time)
+
+    # Set RTC datetime with the current time
+    rtc.datetime((current_time[0], current_time[1], current_time[2], current_time[6], current_time[3], current_time[4], current_time[5], 0))
+    server = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
+    server.bind(('192.168.84.174', 1234)) #mac addresses changes everytime wifi is resetted
+    server.listen(1)
+    client, addr = server.accept()
+
+    # Send the RTC date and time to ESP32-S
+    client.send(json.dumps(rtc.datetime()))
+
+    # Close the connection
+    client.close()
+    server.close()
+
 
 
 #...............connect to wifi............
@@ -294,7 +322,6 @@ while(not sta.isconnected()):
 
 print("Connected successfully")
 
-
 #.................main setup................
 
 
@@ -307,9 +334,13 @@ if __name__ == "__main__":
     # import certs
     #with open('hivemq-com-chain.der') as f:
         #open_cert = f.read()
-    
+    sync()
     client = MQTT_client()
     time.sleep(1)
+    # Wait for ESP32-S to connect
+    
+
+    #client = MQTT_client()
     
     while True:
         laeq_computation()
