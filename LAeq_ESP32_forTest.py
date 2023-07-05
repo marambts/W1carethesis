@@ -5,25 +5,16 @@ import utime as time
 import array
 
 #.......wifi initialization
-import micropython
-import network
 
 # ............I2S sensor initializations.............
 from machine import I2S
 from machine import Pin
-from machine import UART
 
 #..........MQTT Initialization.............
-import time
-import json
-#from micropython import datetime
-import ubinascii
-import machine
-from umqtt.simple import MQTTClient
-import ussl
 #from config import BROKER_URL, USER, PASSWORD
 
 #............Configuration..................
+
 LEQ_PERIOD = 1 
 #values from microphone datasheet
 MIC_OFFSET_DB = 3.0103 #for short_spl_db
@@ -204,10 +195,13 @@ def laeq_computation():
     
     gc.collect()
     end = time.ticks_us()
-    print("1-Second LAeq reading takes", time.ticks_diff(end, start)/1000000, "seconds or", time.ticks_diff(end, start), "microseconds")
+    print("1-Second LAeq reading took", time.ticks_diff(end, start)/1000000, "seconds or", time.ticks_diff(end, start), "microseconds", "\n")
 
 count = 0
-while True:
+while count < 10:
     count+=1
-    print("Reading: ", count)
+    print("Reading ", count)
     laeq_computation()
+    
+    if count == 10:
+        print("10-second reading is done")
