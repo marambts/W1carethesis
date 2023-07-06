@@ -336,7 +336,7 @@ if __name__ == "__main__":
         #open_cert = f.read()
     sync()
     client = MQTT_client()
-    time.sleep(1)
+    time.sleep(0.001)
     # Wait for ESP32-S to connect
     
 
