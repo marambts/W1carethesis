@@ -196,10 +196,7 @@ def main():
     ESP32_MFCC = compute_mfcc(audio_data, SAMPLE_RATE)
 
         # Print MFCC coefficients
-    print(ESP32_MFCC)
-# Run the main function
-main()
-            
+    print(ESP32_MFCC)            
     
 #.........Send dB(A) reading via MQTT.............
 
